@@ -114,6 +114,11 @@ struct ColorPrimaries {
 
 struct TransferCharacteristics {
     double alpha, beta, gamma, delta;
+    int (*delinearize) (double v,
+                        double alpha, double beta, double gamma, double delta);
+    int (*linearize) (double v,
+                      double alpha, double beta,
+                      double inv_alpha, double inv_gamma, double inv_delta);
 };
 
 struct LumaCoefficients {
@@ -270,6 +275,39 @@ static int default_linearize(double v,
     return av_clip_int16(lrint(l * 28672.0));
 }
 
+static int ecg_delinearize(double v,
+                           double alpha, double beta, double gamma, double delta)
+{
+    double d;
+
+    if (v <= -gamma / 100) {
+        d = -(alpha * pow(-4 * v, gamma) + (alpha - 1.0)) / 4;
+    } else if (v < beta) {
+        d = delta * v;
+    } else {
+        d = alpha * pow(v, gamma) - (alpha - 1.0);
+    }
+
+    return av_clip_int16(lrint(d * 28672.0));
+}
+
+static int ecg_linearize(double v,
+                         double alpha, double beta,
+                         double inv_alpha, double inv_gamma, double inv_delta)
+{
+    double l;
+
+    if (v <= -inv_gamma * 100) {
+        l = 4 * -pow((1.0 - alpha - (v / 4)) * inv_alpha, inv_gamma);
+    } else if (v < beta) {
+        l = v * inv_delta;
+    } else {
+        l = pow((v + alpha - 1.0) * inv_alpha, inv_gamma);
+    }
+
+    return av_clip_int16(lrint(l * 28672.0));
+}
+
 // FIXME I'm pretty sure gamma22/28 also have a linear toe slope, but I can't
 // find any actual tables that document their real values...
 // See http://www.13thmonkey.org/~boris/gammacorrection/ first graph why it matters
@@ -283,6 +321,7 @@ static const struct TransferCharacteristics transfer_characteristics[AVCOL_TRC_N
     [AVCOL_TRC_IEC61966_2_4] = { 1.099, 0.018, 0.45, 4.5 },
     [AVCOL_TRC_BT2020_10] = { 1.099,  0.018,  0.45, 4.5 },
     [AVCOL_TRC_BT2020_12] = { 1.0993, 0.0181, 0.45, 4.5 },
+    [AVCOL_TRC_BT1361_ECG] = { 1.099, 0.018,  0.45, 4.5, ecg_delinearize, ecg_linearize },
 };
 
 static const struct TransferCharacteristics *
@@ -363,8 +402,18 @@ static int fill_gamma_table(ColorSpaceContext *s)
     double in_alpha = s->in_txchr->alpha, in_beta = s->in_txchr->beta;
     double in_gamma = s->in_txchr->gamma, in_delta = s->in_txchr->delta;
     double in_ialpha = 1.0 / in_alpha, in_igamma = 1.0 / in_gamma, in_idelta = 1.0 / in_delta;
+    int (*delinearize) (double v,
+                        double alpha, double beta, double gamma, double delta) = s->out_txchr->delinearize;
     double out_alpha = s->out_txchr->alpha, out_beta = s->out_txchr->beta;
     double out_gamma = s->out_txchr->gamma, out_delta = s->out_txchr->delta;
+    int (*linearize) (double v,
+                      double alpha, double beta,
+                      double inv_alpha, double inv_gamma, double inv_delta) = s->in_txchr->linearize;
+
+    if (!linearize)
+        linearize = default_linearize;
+    if (!delinearize)
+        delinearize = default_delinearize;
 
     s->lin_lut = av_malloc(sizeof(*s->lin_lut) * 32768 * 2);
     if (!s->lin_lut)
@@ -373,9 +422,9 @@ static int fill_gamma_table(ColorSpaceContext *s)
     for (n = 0; n < 32768; n++) {
         double v = (n - 2048.0) / 28672.0;
 
-        s->delin_lut[n] = default_delinearize(v, out_alpha, out_beta, out_gamma, out_delta);
+        s->delin_lut[n] = delinearize(v, out_alpha, out_beta, out_gamma, out_delta);
 
-        s->lin_lut[n] = default_linearize(v, in_alpha, in_beta, in_ialpha, in_igamma, in_idelta);
+        s->lin_lut[n] = linearize(v, in_alpha, in_beta, in_ialpha, in_igamma, in_idelta);
     }
 
     return 0;
@@ -1119,6 +1168,7 @@ static const AVOption colorspace_options[] = {
     ENUM("smpte240m",    AVCOL_TRC_SMPTE240M,    "trc"),
     ENUM("srgb",         AVCOL_TRC_IEC61966_2_1, "trc"),
     ENUM("iec61966-2-1", AVCOL_TRC_IEC61966_2_1, "trc"),
+    ENUM("bt1361e",      AVCOL_TRC_BT1361_ECG,   "trc"),
     ENUM("xvycc",        AVCOL_TRC_IEC61966_2_4, "trc"),
     ENUM("iec61966-2-4", AVCOL_TRC_IEC61966_2_4, "trc"),
     ENUM("bt2020-10",    AVCOL_TRC_BT2020_10,    "trc"),
