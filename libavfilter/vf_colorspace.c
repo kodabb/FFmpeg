@@ -237,6 +237,39 @@ static void fill_rgb2yuv_table(const struct LumaCoefficients *coeffs,
     rgb2yuv[2][2] = rscale * coeffs->cb;
 }
 
+static int default_delinearize(double v,
+                               double alpha, double beta, double gamma, double delta)
+{
+    double d;
+
+    if (v <= -beta) {
+        d = -alpha * pow(-v, gamma) + (alpha - 1.0);
+    } else if (v < beta) {
+        d = delta * v;
+    } else {
+        d = alpha * pow(v, gamma) - (alpha - 1.0);
+    }
+
+    return av_clip_int16(lrint(d * 28672.0));
+}
+
+static int default_linearize(double v,
+                             double alpha, double beta,
+                             double inv_alpha, double inv_gamma, double inv_delta)
+{
+    double l;
+
+    if (v <= -beta) {
+        l = -pow((1.0 - alpha - v) * inv_alpha, inv_gamma);
+    } else if (v < beta) {
+        l = v * inv_delta;
+    } else {
+        l = pow((v + alpha - 1.0) * inv_alpha, inv_gamma);
+    }
+
+    return av_clip_int16(lrint(l * 28672.0));
+}
+
 // FIXME I'm pretty sure gamma22/28 also have a linear toe slope, but I can't
 // find any actual tables that document their real values...
 // See http://www.13thmonkey.org/~boris/gammacorrection/ first graph why it matters
@@ -338,27 +371,11 @@ static int fill_gamma_table(ColorSpaceContext *s)
         return AVERROR(ENOMEM);
     s->delin_lut = &s->lin_lut[32768];
     for (n = 0; n < 32768; n++) {
-        double v = (n - 2048.0) / 28672.0, d, l;
+        double v = (n - 2048.0) / 28672.0;
 
-        // delinearize
-        if (v <= -out_beta) {
-            d = -out_alpha * pow(-v, out_gamma) + (out_alpha - 1.0);
-        } else if (v < out_beta) {
-            d = out_delta * v;
-        } else {
-            d = out_alpha * pow(v, out_gamma) - (out_alpha - 1.0);
-        }
-        s->delin_lut[n] = av_clip_int16(lrint(d * 28672.0));
+        s->delin_lut[n] = default_delinearize(v, out_alpha, out_beta, out_gamma, out_delta);
 
-        // linearize
-        if (v <= -in_beta) {
-            l = -pow((1.0 - in_alpha - v) * in_ialpha, in_igamma);
-        } else if (v < in_beta) {
-            l = v * in_idelta;
-        } else {
-            l = pow((v + in_alpha - 1.0) * in_ialpha, in_igamma);
-        }
-        s->lin_lut[n] = av_clip_int16(lrint(l * 28672.0));
+        s->lin_lut[n] = default_linearize(v, in_alpha, in_beta, in_ialpha, in_igamma, in_idelta);
     }
 
     return 0;
