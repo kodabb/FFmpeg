@@ -308,6 +308,18 @@ static int ecg_linearize(double v,
     return av_clip_int16(lrint(l * 28672.0));
 }
 
+static int linear_delinearize(double v,
+                              double alpha, double beta, double gamma, double delta)
+{
+    return av_clip_int16(lrint(v * 28672.0));
+}
+
+static int linear_linearize(double v, double alpha, double beta,
+                            double inv_alpha, double inv_gamma, double inv_delta)
+{
+    return av_clip_int16(lrint(v * 28672.0));
+}
+
 // FIXME I'm pretty sure gamma22/28 also have a linear toe slope, but I can't
 // find any actual tables that document their real values...
 // See http://www.13thmonkey.org/~boris/gammacorrection/ first graph why it matters
@@ -322,6 +334,7 @@ static const struct TransferCharacteristics transfer_characteristics[AVCOL_TRC_N
     [AVCOL_TRC_BT2020_10] = { 1.099,  0.018,  0.45, 4.5 },
     [AVCOL_TRC_BT2020_12] = { 1.0993, 0.0181, 0.45, 4.5 },
     [AVCOL_TRC_BT1361_ECG] = { 1.099, 0.018,  0.45, 4.5, ecg_delinearize, ecg_linearize },
+    [AVCOL_TRC_LINEAR]    = { 1,      1,      1,    1,   linear_delinearize,   linear_linearize },
 };
 
 static const struct TransferCharacteristics *
@@ -1166,6 +1179,7 @@ static const AVOption colorspace_options[] = {
     ENUM("gamma28",      AVCOL_TRC_GAMMA28,      "trc"),
     ENUM("smpte170m",    AVCOL_TRC_SMPTE170M,    "trc"),
     ENUM("smpte240m",    AVCOL_TRC_SMPTE240M,    "trc"),
+    ENUM("linear",       AVCOL_TRC_LINEAR,       "trc"),
     ENUM("srgb",         AVCOL_TRC_IEC61966_2_1, "trc"),
     ENUM("iec61966-2-1", AVCOL_TRC_IEC61966_2_1, "trc"),
     ENUM("bt1361e",      AVCOL_TRC_BT1361_ECG,   "trc"),
